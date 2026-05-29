@@ -1,0 +1,6 @@
+---
+kubernetes_version: "1.30"
+pod_network_cidr: "192.168.0.0/16"
+calico_manifest_url: "https://raw.githubusercontent.com/projectcalico/calico/v3.27.3/manifests/calico.yaml"
+cluster_user: "ubuntu"
+fetch_kubeconfig: true

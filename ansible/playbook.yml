@@ -1,0 +1,45 @@
+---
+- name: Prepare every kubeadm node
+  hosts: kube_cluster
+  become: true
+  gather_facts: true
+  roles:
+    - common
+
+- name: Initialize kubeadm control plane
+  hosts: kube_control_plane
+  become: true
+  gather_facts: true
+  roles:
+    - control_plane
+
+- name: Join kubeadm workers
+  hosts: kube_workers
+  become: true
+  gather_facts: true
+  roles:
+    - workers
+
+- name: Verify Kubernetes cluster
+  hosts: kube_control_plane
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for nodes to report Ready
+      ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes
+      register: kubectl_nodes
+      changed_when: false
+      retries: 20
+      delay: 15
+      until:
+        - kubectl_nodes.rc == 0
+        - "' NotReady' not in kubectl_nodes.stdout"
+
+    - name: Show cluster nodes
+      ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes -o wide
+      register: cluster_nodes
+      changed_when: false
+
+    - name: Print node summary
+      ansible.builtin.debug:
+        var: cluster_nodes.stdout_lines

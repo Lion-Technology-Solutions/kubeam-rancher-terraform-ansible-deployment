@@ -1,0 +1,62 @@
+---
+- name: Check if the control plane is already initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: kubeadm_admin_conf
+
+- name: Initialize kubeadm control plane
+  ansible.builtin.command: >
+    kubeadm init
+    --pod-network-cidr={{ pod_network_cidr }}
+    --apiserver-advertise-address={{ private_ip | default(ansible_default_ipv4.address) }}
+    --node-name={{ inventory_hostname }}
+  args:
+    creates: /etc/kubernetes/admin.conf
+  when: not kubeadm_admin_conf.stat.exists
+
+- name: Ensure kubeconfig directory exists for cluster user
+  ansible.builtin.file:
+    path: "/home/{{ cluster_user }}/.kube"
+    state: directory
+    owner: "{{ cluster_user }}"
+    group: "{{ cluster_user }}"
+    mode: "0755"
+
+- name: Copy kubeconfig for cluster user
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "/home/{{ cluster_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ cluster_user }}"
+    group: "{{ cluster_user }}"
+    mode: "0600"
+
+- name: Install Calico pod network
+  ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f {{ calico_manifest_url }}
+  register: calico_apply
+  changed_when: "'created' in calico_apply.stdout or 'configured' in calico_apply.stdout"
+
+- name: Create kubeadm worker join command
+  ansible.builtin.command: kubeadm token create --print-join-command
+  register: kubeadm_join_command
+  changed_when: false
+
+- name: Save join command for worker play
+  ansible.builtin.set_fact:
+    kubeadm_worker_join_command: "{{ kubeadm_join_command.stdout }}"
+
+- name: Ensure local artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ playbook_dir }}/artifacts"
+    state: directory
+    mode: "0700"
+  become: false
+  delegate_to: localhost
+  when: fetch_kubeconfig | bool
+
+- name: Fetch kubeconfig to local artifacts
+  ansible.builtin.fetch:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ playbook_dir }}/artifacts/admin.conf"
+    flat: true
+  when: fetch_kubeconfig | bool

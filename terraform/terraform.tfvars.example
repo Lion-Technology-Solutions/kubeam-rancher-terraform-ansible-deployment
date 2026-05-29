@@ -1,0 +1,30 @@
+# Defaults already match the requested deployment:
+# - region: us-east-1
+# - instance type: t2.medium
+# - one master node
+# - three liontech-worker nodes
+# - SSH private key: rancher0529.pem
+
+aws_region           = "us-east-1"
+project_name         = "liontech-kubeadm"
+environment          = "dev"
+key_name             = "rancher0529"
+ssh_private_key_path = "~/.ssh/rancher0529.pem"
+instance_type        = "t2.medium"
+control_plane_count  = 1
+worker_count         = 3
+master_name_prefix   = "liontech-master"
+worker_name_prefix   = "liontech-worker"
+
+# For production, replace these with your workstation public IP, for example:
+# ssh_allowed_cidr      = "203.0.113.10/32"
+# api_allowed_cidr      = "203.0.113.10/32"
+# nodeport_allowed_cidr = "203.0.113.10/32"
+ssh_allowed_cidr      = "0.0.0.0/0"
+api_allowed_cidr      = "0.0.0.0/0"
+nodeport_allowed_cidr = "0.0.0.0/0"
+
+vpc_cidr            = "10.52.0.0/16"
+public_subnet_cidrs = ["10.52.1.0/24", "10.52.2.0/24"]
+kubernetes_version  = "1.30"
+pod_network_cidr    = "192.168.0.0/16"
