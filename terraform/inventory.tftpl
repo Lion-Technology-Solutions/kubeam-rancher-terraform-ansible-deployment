@@ -2,12 +2,12 @@
 
 [kube_control_plane]
 %{ for node in master_nodes ~}
-${node.name} ansible_host=${node.public_ip} private_ip=${node.private_ip} node_role=control-plane
+${node.name} ansible_host=${node.public_ip} public_ip=${node.public_ip} private_ip=${node.private_ip} node_role=control-plane
 %{ endfor ~}
 
 [kube_workers]
 %{ for node in worker_nodes ~}
-${node.name} ansible_host=${node.public_ip} private_ip=${node.private_ip} node_role=worker
+${node.name} ansible_host=${node.public_ip} public_ip=${node.public_ip} private_ip=${node.private_ip} node_role=worker
 %{ endfor ~}
 
 [kube_cluster:children]

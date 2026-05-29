@@ -9,6 +9,7 @@
     kubeadm init
     --pod-network-cidr={{ pod_network_cidr }}
     --apiserver-advertise-address={{ private_ip | default(ansible_default_ipv4.address) }}
+    --apiserver-cert-extra-sans={{ public_ip | default(ansible_host) }},{{ private_ip | default(ansible_default_ipv4.address) }}
     --node-name={{ inventory_hostname }}
   args:
     creates: /etc/kubernetes/admin.conf
@@ -59,4 +60,13 @@
     src: /etc/kubernetes/admin.conf
     dest: "{{ playbook_dir }}/artifacts/admin.conf"
     flat: true
+  when: fetch_kubeconfig | bool
+
+- name: Point local kubeconfig at the public API endpoint
+  ansible.builtin.replace:
+    path: "{{ playbook_dir }}/artifacts/admin.conf"
+    regexp: 'server: https://[^:]+:6443'
+    replace: "server: https://{{ public_ip | default(ansible_host) }}:6443"
+  become: false
+  delegate_to: localhost
   when: fetch_kubeconfig | bool

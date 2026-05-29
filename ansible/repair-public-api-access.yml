@@ -1,0 +1,111 @@
+---
+- name: Repair local kubeconfig access through the control plane public IP
+  hosts: kube_control_plane
+  become: true
+  gather_facts: true
+  vars:
+    api_private_ip: "{{ private_ip | default(ansible_default_ipv4.address) }}"
+    api_public_ip: "{{ public_ip | default(ansible_host) }}"
+    apiserver_cert: /etc/kubernetes/pki/apiserver.crt
+    apiserver_key: /etc/kubernetes/pki/apiserver.key
+  tasks:
+    - name: Confirm kubeadm control plane exists
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: admin_conf
+
+    - name: Stop if kubeadm has not initialized this control plane
+      ansible.builtin.fail:
+        msg: "Missing /etc/kubernetes/admin.conf. Run the main playbook first."
+      when: not admin_conf.stat.exists
+
+    - name: Check whether apiserver certificate already includes the public IP
+      ansible.builtin.shell: |
+        set -o pipefail
+        openssl x509 -in {{ apiserver_cert }} -text -noout | grep -q "IP Address:{{ api_public_ip }}"
+      args:
+        executable: /bin/bash
+      register: apiserver_public_san
+      changed_when: false
+      failed_when: false
+
+    - name: Back up current apiserver certificate
+      ansible.builtin.copy:
+        src: "{{ apiserver_cert }}"
+        dest: "{{ apiserver_cert }}.pre-public-san"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+        force: false
+      when: apiserver_public_san.rc != 0
+
+    - name: Back up current apiserver key
+      ansible.builtin.copy:
+        src: "{{ apiserver_key }}"
+        dest: "{{ apiserver_key }}.pre-public-san"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+        force: false
+      when: apiserver_public_san.rc != 0
+
+    - name: Remove apiserver certificate before regeneration
+      ansible.builtin.file:
+        path: "{{ apiserver_cert }}"
+        state: absent
+      when: apiserver_public_san.rc != 0
+
+    - name: Remove apiserver key before regeneration
+      ansible.builtin.file:
+        path: "{{ apiserver_key }}"
+        state: absent
+      when: apiserver_public_san.rc != 0
+
+    - name: Regenerate apiserver certificate with public and private IP SANs
+      ansible.builtin.command: >
+        kubeadm init phase certs apiserver
+        --apiserver-advertise-address={{ api_private_ip }}
+        --apiserver-cert-extra-sans={{ api_public_ip }},{{ api_private_ip }}
+      when: apiserver_public_san.rc != 0
+
+    - name: Restart kubelet so the static apiserver pod reloads certificates
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+      when: apiserver_public_san.rc != 0
+
+    - name: Wait for API server on the control plane
+      ansible.builtin.command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get --raw=/readyz
+      register: apiserver_ready
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: apiserver_ready.rc == 0
+
+    - name: Ensure local artifacts directory exists
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/artifacts"
+        state: directory
+        mode: "0700"
+      become: false
+      delegate_to: localhost
+
+    - name: Fetch kubeconfig to local artifacts
+      ansible.builtin.fetch:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ playbook_dir }}/artifacts/admin.conf"
+        flat: true
+
+    - name: Point local kubeconfig at the public API endpoint
+      ansible.builtin.replace:
+        path: "{{ playbook_dir }}/artifacts/admin.conf"
+        regexp: 'server: https://[^:]+:6443'
+        replace: "server: https://{{ api_public_ip }}:6443"
+      become: false
+      delegate_to: localhost
+
+    - name: Show the kubeconfig endpoint to use from WSL
+      ansible.builtin.debug:
+        msg: "Use KUBECONFIG={{ playbook_dir }}/artifacts/admin.conf; API endpoint is https://{{ api_public_ip }}:6443"

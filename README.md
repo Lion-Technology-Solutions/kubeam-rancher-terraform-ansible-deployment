@@ -194,6 +194,17 @@ export KUBECONFIG="$PWD/ansible/artifacts/admin.conf"
 kubectl get nodes -o wide
 ```
 
+If `kubectl get nodes` times out against a `10.52.x.x:6443` address from WSL or your laptop, the kubeconfig is pointing at the private VPC IP. Run the repair playbook:
+
+```bash
+cd ansible
+ansible-playbook -i inventory.ini repair-public-api-access.yml
+export KUBECONFIG="$PWD/artifacts/admin.conf"
+kubectl get nodes -o wide
+```
+
+The repair playbook regenerates the apiserver certificate with the control plane public IP as a SAN, fetches a fresh kubeconfig, and rewrites the local kubeconfig endpoint to the public IP.
+
 ## Expected Nodes
 
 The final cluster should contain:
@@ -289,6 +300,15 @@ Check cluster state from the control plane:
 ```bash
 sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes -o wide
 sudo kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -A
+```
+
+Fix a local kubeconfig timeout to the private API endpoint:
+
+```bash
+cd ansible
+ansible-playbook -i inventory.ini repair-public-api-access.yml
+export KUBECONFIG="$PWD/artifacts/admin.conf"
+kubectl get nodes -o wide
 ```
 
 If workers do not join, create a new join command on the master:
