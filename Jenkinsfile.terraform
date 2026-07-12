@@ -1,0 +1,81 @@
+pipeline {
+  agent any
+
+  options {
+    disableConcurrentBuilds()
+    timestamps()
+  }
+
+  parameters {
+    choice(name: 'TERRAFORM_ACTION', choices: ['init', 'plan', 'apply', 'destroy'], description: 'Terraform workflow to run. Plan, apply, and destroy run init first.')
+    string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region passed to Terraform as aws_region.')
+    credentials(name: 'AWS_CREDENTIALS_ID', defaultValue: 'aws-credentials', credentialType: 'com.cloudbees.jenkins.plugins.awscredentials.AWSCredentialsImpl', description: 'Jenkins AWS credential used by Terraform.', required: true)
+    string(name: 'TF_VAR_FILE', defaultValue: '', description: 'Optional .tfvars file relative to terraform/, for example terraform.tfvars.')
+    string(name: 'TF_BACKEND_CONFIG', defaultValue: '', description: 'Optional backend config file relative to terraform/. Leave blank for the configured/default backend.')
+    string(name: 'TF_LOCK_TIMEOUT', defaultValue: '5m', description: 'How long Terraform waits to acquire the state lock.')
+    booleanParam(name: 'AUTO_APPROVE_APPLY', defaultValue: false, description: 'Required to permit the apply action.')
+    booleanParam(name: 'CONFIRM_DESTROY', defaultValue: false, description: 'Required to permit the destroy action.')
+  }
+
+  environment {
+    TF_IN_AUTOMATION = 'true'
+    TF_INPUT = 'false'
+  }
+
+  stages {
+    stage('Validate parameters') {
+      steps {
+        script {
+          if (!(params.AWS_REGION ==~ /[a-z]{2}(-gov)?-[a-z]+-\d/)) {
+            error('AWS_REGION is not a valid AWS region name.')
+          }
+          if (!(params.TF_LOCK_TIMEOUT ==~ /\d+(s|m|h)/)) {
+            error('TF_LOCK_TIMEOUT must use Terraform duration syntax such as 30s, 5m, or 1h.')
+          }
+          [params.TF_VAR_FILE, params.TF_BACKEND_CONFIG].findAll { it?.trim() }.each { path ->
+            if (!(path ==~ /[A-Za-z0-9_.\/-]+/) || path.contains('..') || path.startsWith('/')) {
+              error("Unsafe relative file path: ${path}")
+            }
+          }
+          if (params.TERRAFORM_ACTION == 'apply' && !params.AUTO_APPROVE_APPLY) {
+            error('Set AUTO_APPROVE_APPLY=true to run terraform apply.')
+          }
+          if (params.TERRAFORM_ACTION == 'destroy' && !params.CONFIRM_DESTROY) {
+            error('Set CONFIRM_DESTROY=true to run terraform destroy.')
+          }
+        }
+      }
+    }
+
+    stage('Terraform') {
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: params.AWS_CREDENTIALS_ID]]) {
+          dir('terraform') {
+            script {
+              def backendOption = params.TF_BACKEND_CONFIG.trim() ? "-backend-config=${params.TF_BACKEND_CONFIG.trim()}" : ''
+              def varFileOption = params.TF_VAR_FILE.trim() ? "-var-file=${params.TF_VAR_FILE.trim()}" : ''
+              sh "terraform init -input=false -no-color ${backendOption}"
+
+              if (params.TERRAFORM_ACTION == 'init') {
+                sh 'terraform validate -no-color'
+              } else if (params.TERRAFORM_ACTION == 'plan') {
+                sh "terraform plan -input=false -no-color -lock-timeout=${params.TF_LOCK_TIMEOUT} -var=aws_region=${params.AWS_REGION} ${varFileOption} -out=tfplan"
+              } else if (params.TERRAFORM_ACTION == 'apply') {
+                sh "terraform plan -input=false -no-color -lock-timeout=${params.TF_LOCK_TIMEOUT} -var=aws_region=${params.AWS_REGION} ${varFileOption} -out=tfplan"
+                sh "terraform apply -input=false -no-color -lock-timeout=${params.TF_LOCK_TIMEOUT} -auto-approve tfplan"
+              } else if (params.TERRAFORM_ACTION == 'destroy') {
+                sh "terraform destroy -input=false -no-color -lock-timeout=${params.TF_LOCK_TIMEOUT} -auto-approve -var=aws_region=${params.AWS_REGION} ${varFileOption}"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      deleteDir()
+    }
+  }
+}
